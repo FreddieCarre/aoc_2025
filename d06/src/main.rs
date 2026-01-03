@@ -49,104 +49,180 @@ impl Debug for Equation {
     }
 }
 
-/// TODO: For part 2 - need to split only on the 1st whitespace between the groups of numbers.
-/// i.e. if there is "123  4" then we should have "123" and " 4" - this is so that we get the correct position of the s.f.
-/// part 2 will alos need to keep the items as strung so can't return as an equation yet.
-fn parse(input: &str) -> Vec<Equation> {
-    let lines: Vec<Vec<String>> = input
-        .trim()
-        .lines()
-        .map(|l| l.split_whitespace().map(|s| s.to_string()).collect())
-        .collect();
+/// A problem parsed as a grid of characters, preserving column positions.
+/// Each inner Vec represents a row, and each char is a column position.
+struct Problem {
+    /// The character grid (rows x cols), NOT including the operator row
+    grid: Vec<Vec<char>>,
+    /// The operation for this problem
+    op: Operation,
+}
 
-    if lines.len() == 0 {
-        panic!("Empty input {}", input);
+/// Parse input into a character grid, then group columns into problems.
+/// Problems are separated by columns that are entirely spaces.
+fn parse_problems(input: &str) -> Vec<Problem> {
+    let lines: Vec<&str> = input.lines().collect();
+    if lines.is_empty() {
+        panic!("Empty input");
     }
 
-    let first = lines.first().unwrap();
+    // Find the maximum line length to handle ragged lines
+    let max_len = lines.iter().map(|l| l.len()).max().unwrap_or(0);
 
-    let row_count = lines.len();
-    let col_count = first.len();
-
-    (0..col_count)
-        .map(|col| {
-            let nums = lines[0..row_count - 1]
-                .iter()
-                .map(|l| l[col].parse().unwrap())
-                .collect::<Vec<u64>>();
-
-            let op = match lines.last().unwrap()[col].as_str() {
-                "*" => Operation::MUL,
-                "+" => Operation::SUM,
-                o => panic!("Unexpected operation {o}"),
-            };
-
-            Equation { nums, op }
+    // Convert to a character grid, padding shorter lines with spaces
+    let grid: Vec<Vec<char>> = lines
+        .iter()
+        .map(|line| {
+            let mut chars: Vec<char> = line.chars().collect();
+            chars.resize(max_len, ' ');
+            chars
         })
-        .collect()
+        .collect();
+
+    let row_count = grid.len();
+    let col_count = max_len;
+
+    if row_count < 2 {
+        panic!("Need at least 2 rows (numbers + operators)");
+    }
+
+    // The last row contains operators
+    let op_row = &grid[row_count - 1];
+    let data_rows = &grid[0..row_count - 1];
+
+    // Group columns into problems by finding separator columns (all spaces)
+    let mut problems: Vec<Problem> = Vec::new();
+    let mut current_cols: Vec<usize> = Vec::new();
+
+    for col in 0..col_count {
+        // Check if this column is a separator (all spaces including operator row)
+        let is_separator = data_rows.iter().all(|row| row[col] == ' ') && op_row[col] == ' ';
+
+        if is_separator {
+            // If we have accumulated columns, create a problem
+            if !current_cols.is_empty() {
+                let problem = create_problem(data_rows, op_row, &current_cols);
+                problems.push(problem);
+                current_cols.clear();
+            }
+        } else {
+            current_cols.push(col);
+        }
+    }
+
+    // Don't forget the last problem if there's no trailing separator
+    if !current_cols.is_empty() {
+        let problem = create_problem(data_rows, op_row, &current_cols);
+        problems.push(problem);
+    }
+
+    problems
+}
+
+fn create_problem(data_rows: &[Vec<char>], op_row: &[char], cols: &[usize]) -> Problem {
+    // Extract the grid for this problem
+    let grid: Vec<Vec<char>> = data_rows
+        .iter()
+        .map(|row| cols.iter().map(|&c| row[c]).collect())
+        .collect();
+
+    // Find the operator (first non-space char in the operator row for these columns)
+    let op_char = cols
+        .iter()
+        .find_map(|&c| {
+            let ch = op_row[c];
+            if ch != ' ' { Some(ch) } else { None }
+        })
+        .expect("No operator found for problem");
+
+    let op = match op_char {
+        '*' => Operation::MUL,
+        '+' => Operation::SUM,
+        o => panic!("Unexpected operation {o}"),
+    };
+
+    Problem { grid, op }
+}
+
+/// Part 1: Read numbers left-to-right within each row
+fn problem_to_equation_part1(problem: &Problem) -> Equation {
+    let nums: Vec<u64> = problem
+        .grid
+        .iter()
+        .map(|row| {
+            let num_str: String = row.iter().filter(|c| c.is_ascii_digit()).collect();
+            num_str.parse().expect("Failed to parse number")
+        })
+        .collect();
+
+    Equation {
+        nums,
+        op: match problem.op {
+            Operation::SUM => Operation::SUM,
+            Operation::MUL => Operation::MUL,
+        },
+    }
+}
+
+/// Part 2: Read columns right-to-left, building numbers from top to bottom within each column
+fn problem_to_equation_part2(problem: &Problem) -> Equation {
+    let col_count = problem.grid.first().map(|r| r.len()).unwrap_or(0);
+    let row_count = problem.grid.len();
+
+    // Process columns from right to left
+    let nums: Vec<u64> = (0..col_count)
+        .rev()
+        .map(|col| {
+            // Build number from digits in this column
+            // Top digit is most significant, bottom is least significant
+            // First collect all digits, then build the number
+            let digits: Vec<u64> = (0..row_count)
+                .filter_map(|row| {
+                    let ch = problem.grid[row][col];
+                    if ch.is_ascii_digit() {
+                        Some(ch.to_digit(10).unwrap() as u64)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            // Build number: first digit is most significant
+            let mut num: u64 = 0;
+            for digit in digits {
+                num = num * 10 + digit;
+            }
+
+            num
+        })
+        .collect();
+
+    Equation {
+        nums,
+        op: match problem.op {
+            Operation::SUM => Operation::SUM,
+            Operation::MUL => Operation::MUL,
+        },
+    }
 }
 
 fn part_1(input: &str) -> u64 {
-    let equations = parse(input);
+    let problems = parse_problems(input);
 
-    equations.iter().map(|e| e.solve()).sum()
+    problems
+        .iter()
+        .map(|p| problem_to_equation_part1(p))
+        .map(|e| e.solve())
+        .sum()
 }
 
 fn part_2(input: &str) -> u64 {
-    let equations = parse(input);
+    let problems = parse_problems(input);
 
-    equations
+    problems
         .iter()
-        .map(|e| {
-            println!("Initial equation {e:?}");
-            let max_sf = e.nums.iter().max_by_key(|n| n.ilog10()).unwrap().ilog10();
-
-            if max_sf == 0 {
-                return e.solve();
-            }
-
-            let new_nums_str: Vec<Vec<String>> = e
-                .nums
-                .iter()
-                .map(|n| format!("{n}").chars().map(|c| c.to_string()).collect())
-                .collect();
-
-            println!("Max sf {max_sf}");
-
-            let mut new_nums: Vec<u64> = vec![];
-
-            for sf in (0..=max_sf).rev() {
-                let mut new_num: u64 = 0;
-                let mut new_sf: u32 = 0;
-
-                new_nums_str.iter().for_each(|parts| {
-                    let next = &parts[sf as usize];
-
-                    if next == "_" {
-                        return;
-                    }
-
-                    let n_parsed: u64 = parts[sf as usize].parse().unwrap();
-
-                    new_num += n_parsed * (10_u64).pow(new_sf);
-                    new_sf += 1;
-                });
-
-                new_nums.push(new_num);
-            }
-
-            let new_e = Equation {
-                nums: new_nums,
-                op: match e.op {
-                    Operation::SUM => Operation::SUM,
-                    Operation::MUL => Operation::MUL,
-                },
-            };
-
-            println!("New equation {new_e:?}");
-
-            new_e.solve()
-        })
+        .map(|p| problem_to_equation_part2(p))
+        .map(|e| e.solve())
         .sum()
 }
 
